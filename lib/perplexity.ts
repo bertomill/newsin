@@ -132,7 +132,7 @@ export async function getPerplexityCompletion(
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: "sonar", // Changed from sonar-pro to sonar for faster responses
+          model: "sonar-pro", // Using sonar-pro for deeper research capabilities
           messages: validatedMessages,
           temperature: 0.2,
           max_tokens: 800, // Further reduced from 1000 to reduce response time
@@ -211,7 +211,7 @@ export async function streamPerplexityCompletion(
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: "sonar", // Using faster model
+          model: "sonar-pro", // Using sonar-pro for deeper research capabilities
           messages: validatedMessages,
           temperature: 0.2,
           max_tokens: 800,

@@ -89,8 +89,8 @@ export async function POST(request: NextRequest) {
     formattedMessages.push({
       role: 'system',
       content: systemMessage 
-        ? `${systemMessage.content} ${enhancedSystemPrompt}. Keep responses concise and under 300 words.`
-        : `You are a helpful AI assistant for a news application. ${enhancedSystemPrompt} Keep responses concise and under 300 words.`
+        ? `${systemMessage.content} ${enhancedSystemPrompt}. Provide comprehensive, well-researched responses with relevant details and insights. Include citations where appropriate.`
+        : `You are a helpful AI assistant for a news application. ${enhancedSystemPrompt} Provide comprehensive, well-researched responses with relevant details and insights. Include citations where appropriate.`
     });
     
     // 2. Add conversation history (the validation will happen in the utility function)
@@ -116,7 +116,6 @@ export async function POST(request: NextRequest) {
         const textDecoder = new TextDecoder();
         const textEncoder = new TextEncoder();
         
-        let accumulatedContent = '';
         let citations: string[] = [];
         
         try {
@@ -145,7 +144,6 @@ export async function POST(request: NextRequest) {
                       jsonData.choices[0].delta.content) {
                     
                     const contentDelta = jsonData.choices[0].delta.content;
-                    accumulatedContent += contentDelta;
                     
                     // Send only the content delta to the client
                     await writer.write(textEncoder.encode(contentDelta));

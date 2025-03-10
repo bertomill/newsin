@@ -89,8 +89,8 @@ export async function POST(request: NextRequest) {
     formattedMessages.push({
       role: 'system',
       content: systemMessage 
-        ? `${systemMessage.content} ${enhancedSystemPrompt}. Keep responses concise and under 300 words.`
-        : `You are a helpful AI assistant for a news application. ${enhancedSystemPrompt} Keep responses concise and under 300 words.`
+        ? `${systemMessage.content} ${enhancedSystemPrompt}. Provide comprehensive, well-researched responses with relevant details and insights. Include citations where appropriate.`
+        : `You are a helpful AI assistant for a news application. ${enhancedSystemPrompt} Provide comprehensive, well-researched responses with relevant details and insights. Include citations where appropriate.`
     });
     
     // 2. Add conversation history (the validation will happen in the utility function)
