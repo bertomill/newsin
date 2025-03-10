@@ -101,15 +101,90 @@ export async function POST(request: NextRequest) {
     
     try {
       // Get the streaming response from Perplexity
-      const stream = await streamPerplexityCompletion(
+      const rawStream = await streamPerplexityCompletion(
         formattedMessages,
         PERPLEXITY_API_KEY
       );
       
-      // Return the stream directly
-      return new Response(stream, {
+      // Create a TransformStream to process the raw stream
+      const { readable, writable } = new TransformStream();
+      
+      // Process the stream in the background
+      const processStream = async () => {
+        const reader = rawStream.getReader();
+        const writer = writable.getWriter();
+        const textDecoder = new TextDecoder();
+        const textEncoder = new TextEncoder();
+        
+        let accumulatedContent = '';
+        let citations: string[] = [];
+        
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) {
+              break;
+            }
+            
+            // Decode the chunk
+            const chunk = textDecoder.decode(value, { stream: true });
+            
+            // Process the chunk - extract only the content from the JSON
+            const lines = chunk.split('\n').filter(line => line.trim() !== '');
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const jsonData = JSON.parse(line.substring(6));
+                  
+                  // Extract content delta if available
+                  if (jsonData.choices && 
+                      jsonData.choices[0] && 
+                      jsonData.choices[0].delta && 
+                      jsonData.choices[0].delta.content) {
+                    
+                    const contentDelta = jsonData.choices[0].delta.content;
+                    accumulatedContent += contentDelta;
+                    
+                    // Send only the content delta to the client
+                    await writer.write(textEncoder.encode(contentDelta));
+                  }
+                  
+                  // Store citations if available
+                  if (jsonData.citations && jsonData.citations.length > 0) {
+                    citations = jsonData.citations;
+                  }
+                } catch (e) {
+                  console.error('Error parsing JSON from stream:', e);
+                }
+              }
+            }
+          }
+          
+          // If we have citations, send them at the end
+          if (citations.length > 0) {
+            const citationsText = '\n\nSources:\n' + citations.map((url, i) => `[${i+1}] ${url}`).join('\n');
+            await writer.write(textEncoder.encode(citationsText));
+          }
+          
+        } catch (error) {
+          console.error('Error processing stream:', error);
+          await writer.write(textEncoder.encode(`\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`));
+        } finally {
+          await writer.close();
+        }
+      };
+      
+      // Start processing the stream
+      processStream().catch(error => {
+        console.error('Unhandled error in stream processing:', error);
+      });
+      
+      // Return the readable part of the transform stream
+      return new Response(readable, {
         headers: {
-          'Content-Type': 'text/event-stream',
+          'Content-Type': 'text/plain; charset=utf-8',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive'
         }
