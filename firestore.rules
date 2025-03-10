@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // During development, allow all reads and writes
+    // WARNING: This is insecure and should be changed before production
+    match /{document=**} {
+      allow read, write: if true;
+    }
+    
+    // The rules below are more secure and should be used in production
+    // Uncomment these and remove the rule above when ready for production
+    
+    // // Allow authenticated users to read and write their own data
+    // match /users/{userId} {
+    //   // Allow read and write access if the authenticated user ID matches the document ID
+    //   allow read, write: if request.auth != null && request.auth.uid == userId;
+    // }
+    
+    // // Default deny all access
+    // match /{document=**} {
+    //   allow read, write: if false;
+    // }
+  }
+} 

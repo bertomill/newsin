@@ -1,0 +1,365 @@
+'use client';
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
+import { app, db } from '@/lib/firebase';
+import AppLayout from '@/components/AppLayout';
+import { Message, UserBusinessContext } from './types';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+// Suggested topics for the user to ask about
+const SUGGESTED_TOPICS = [
+  "What are the latest trends in my industry?",
+  "Summarize recent news about my business sector",
+  "What should I know about my key themes today?",
+  "How is AI transforming my industry?",
+  "What are my competitors doing?"
+];
+
+export default function Assistant() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [userName, setUserName] = useState('');
+  const [userBusinessInfo, setUserBusinessInfo] = useState<UserBusinessContext | null>(null);
+  
+  // Chat state
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // Initialize chat with personalized welcome message
+  const initializeChat = useCallback(
+    (
+      businessDescription = '',
+      role = '',
+      themes: string[] = []
+    ) => {
+      // Create system message with user context
+      const systemMessage: Message = {
+        id: generateId(),
+        role: 'system',
+        content: `You are an AI assistant for a news application. The user is ${userName || 'a professional'} who works in ${businessDescription || 'their industry'}${role ? ` as a ${role}` : ''}. They are interested in ${themes.length > 0 ? themes.join(', ') : 'various business topics'}. Provide helpful, concise information about news and trends relevant to their interests.`,
+        timestamp: new Date()
+      };
+      
+      // Create welcome message
+      const welcomeMessage: Message = {
+        id: generateId(),
+        role: 'assistant',
+        content: `Hello${userName ? `, ${userName}` : ''}! I'm your AI news assistant. I can help you stay updated on the latest news and trends${businessDescription ? ` relevant to ${businessDescription}` : ' in your industry'}. What would you like to know about today?`,
+        timestamp: new Date()
+      };
+      
+      setMessages([systemMessage, welcomeMessage]);
+    },
+    [userName]
+  );
+  
+  // Initialize with system message and welcome message
+  useEffect(() => {
+    const auth = getAuth(app);
+    
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        console.log('Assistant page - User authenticated:', user.uid);
+        
+        // Get user's name for greeting
+        if (user.displayName) {
+          setUserName(user.displayName.split(' ')[0]);
+        } else if (user.email) {
+          setUserName(user.email.split('@')[0]);
+        }
+        
+        // Load user's business information
+        try {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setUserBusinessInfo({
+              business: userData.business || {},
+              role: userData.role || {},
+              themes: userData.themes || {}
+            });
+            
+            // Initialize chat with welcome message
+            initializeChat(
+              userData.business?.description || '',
+              userData.role?.type || '',
+              userData.themes?.selected || []
+            );
+          } else {
+            // Initialize with generic welcome if no user data
+            initializeChat();
+          }
+        } catch (error) {
+          console.error('Error loading user data:', error);
+          initializeChat();
+        }
+        
+        setLoading(false);
+      } else {
+        // Redirect to login if not authenticated
+        router.push('/login');
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [router, initializeChat]);
+  
+  // Auto-scroll to bottom of messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+  
+  // Generate a unique ID for messages
+  const generateId = () => {
+    return Date.now().toString(36) + Math.random().toString(36).substring(2);
+  };
+  
+  // Handle sending a message
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || isProcessing) return;
+    
+    // Add user message to chat
+    const userMessage: Message = {
+      id: generateId(),
+      role: 'user',
+      content: inputMessage,
+      timestamp: new Date()
+    };
+    
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage('');
+    setIsProcessing(true);
+    
+    try {
+      // Get system message for context
+      const systemMessage = messages.find(msg => msg.role === 'system');
+      
+      // Get the last few messages to maintain conversation context
+      // We'll include up to 5 most recent messages (excluding system message)
+      // This creates a sliding window of conversation history
+      const recentMessages = messages
+        .filter(msg => msg.role !== 'system')
+        .slice(-4) // Get last 4 messages from history
+        .map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }));
+      
+      // Add the current user message
+      recentMessages.push({
+        role: 'user',
+        content: inputMessage
+      });
+      
+      // Prepare API request payload with conversation history
+      const payload = {
+        messages: [
+          {
+            role: 'system',
+            content: systemMessage?.content || 'You are a helpful AI assistant for a news application.'
+          },
+          ...recentMessages
+        ],
+        userContext: userBusinessInfo
+      };
+      
+      console.log('Sending request to assistant API with conversation history');
+      
+      // Prepare the API request
+      const response = await fetch('/assistant/api', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Assistant API error status:', response.status);
+        console.error('Assistant API error response:', errorText);
+        throw new Error(`Failed to get response from assistant API: ${response.status} ${errorText}`);
+      }
+      
+      const data = await response.json();
+      console.log('Received response from assistant API:', data);
+      
+      // Add assistant response to chat
+      const assistantMessage: Message = {
+        id: generateId(),
+        role: 'assistant',
+        content: data.content,
+        timestamp: new Date(),
+        citations: data.citations || []
+      };
+      
+      setMessages(prev => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error('Error getting assistant response:', error);
+      
+      // Add error message
+      const errorMessage: Message = {
+        id: generateId(),
+        role: 'assistant',
+        content: `Sorry, I encountered an error while processing your request. ${error instanceof Error ? error.message : 'Please try again.'}`,
+        timestamp: new Date()
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+  
+  // Handle pressing Enter to send message
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+  
+  // Handle clicking a suggested topic
+  const handleSuggestedTopic = (topic: string) => {
+    setInputMessage(topic);
+  };
+  
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+  
+  return (
+    <AppLayout>
+      <div className="flex flex-col h-[calc(100vh-64px)]">
+        {/* Chat header */}
+        <div className="border-b p-4">
+          <h1 className="text-2xl font-bold">News Assistant</h1>
+          <p className="text-gray-600">Ask me anything about news and trends relevant to your business</p>
+        </div>
+        
+        {/* Chat messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.filter(msg => msg.role !== 'system').map((message) => (
+            <div 
+              key={message.id} 
+              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div 
+                className={`max-w-3xl rounded-lg px-4 py-2 ${
+                  message.role === 'user' 
+                    ? 'bg-blue-100 text-gray-800' 
+                    : 'bg-white border border-gray-200 text-gray-800'
+                }`}
+              >
+                {message.role === 'user' ? (
+                  <div className="whitespace-pre-wrap">{message.content}</div>
+                ) : (
+                  <div className="prose prose-sm max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {message.content}
+                    </ReactMarkdown>
+                  </div>
+                )}
+                
+                {/* Citations */}
+                {message.citations && message.citations.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-gray-200">
+                    <p className="text-xs text-gray-500 font-medium">Sources:</p>
+                    <ul className="text-xs text-blue-600">
+                      {message.citations.map((citation, index) => (
+                        <li key={index}>
+                          <a 
+                            href={citation} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="hover:underline"
+                          >
+                            {new URL(citation).hostname}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          
+          {/* Auto-scroll anchor */}
+          <div ref={messagesEndRef} />
+          
+          {/* Loading indicator */}
+          {isProcessing && (
+            <div className="flex justify-start">
+              <div className="bg-white border border-gray-200 rounded-lg px-4 py-2">
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 rounded-full bg-gray-400 animate-pulse"></div>
+                  <div className="w-2 h-2 rounded-full bg-gray-400 animate-pulse delay-150"></div>
+                  <div className="w-2 h-2 rounded-full bg-gray-400 animate-pulse delay-300"></div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Suggested topics */}
+        {messages.length <= 2 && (
+          <div className="px-4 py-3 border-t">
+            <p className="text-sm text-gray-500 mb-2">Suggested topics:</p>
+            <div className="flex flex-wrap gap-2">
+              {SUGGESTED_TOPICS.map((topic, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleSuggestedTopic(topic)}
+                  className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-800 px-3 py-1 rounded-full transition-colors"
+                >
+                  {topic}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {/* Input area */}
+        <div className="border-t p-4">
+          <div className="flex items-end space-x-2">
+            <div className="flex-1 border rounded-lg focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500">
+              <textarea
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Type your message here..."
+                className="w-full p-3 focus:outline-none resize-none"
+                rows={1}
+                disabled={isProcessing}
+              />
+            </div>
+            <button
+              onClick={handleSendMessage}
+              disabled={!inputMessage.trim() || isProcessing}
+              className={`p-3 rounded-lg ${
+                !inputMessage.trim() || isProcessing
+                  ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </AppLayout>
+  );
+} 
