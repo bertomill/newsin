@@ -175,6 +175,110 @@ export async function getPerplexityCompletion(
 }
 
 /**
+ * Streams a response from the Perplexity API for chat completions
+ * 
+ * @param messages - Array of messages in the conversation
+ * @param apiKey - Perplexity API key
+ * @returns A ReadableStream of the API response
+ */
+export async function streamPerplexityCompletion(
+  messages: Message[],
+  apiKey: string
+): Promise<ReadableStream> {
+  try {
+    // Log original messages for debugging
+    console.log('Original messages before validation:', JSON.stringify(messages.map(m => ({ role: m.role, contentLength: m.content.length }))));
+    
+    // Validate and fix messages to ensure they meet Perplexity API requirements
+    const validatedMessages = validateMessages(messages);
+    
+    if (validatedMessages.length === 0) {
+      throw new Error('No valid messages to send to Perplexity API');
+    }
+    
+    console.log('Streaming from Perplexity API with validated messages:', JSON.stringify(validatedMessages));
+    
+    // Create an AbortController to handle timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 55000); // 55 second timeout
+    
+    try {
+      // Make the streaming API request
+      const response = await fetch('https://api.perplexity.ai/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: "sonar", // Using faster model
+          messages: validatedMessages,
+          temperature: 0.2,
+          max_tokens: 800,
+          search_recency_filter: "day",
+          stream: true // Enable streaming
+        }),
+        signal: controller.signal
+      });
+      
+      if (!response.ok) {
+        clearTimeout(timeoutId);
+        const errorText = await response.text();
+        console.error('Perplexity API streaming error:', response.status);
+        console.error('Perplexity API streaming error response:', errorText);
+        throw new Error(`API streaming request failed with status ${response.status}: ${errorText}`);
+      }
+      
+      // Check if we have a readable stream
+      if (!response.body) {
+        clearTimeout(timeoutId);
+        throw new Error('No response body received from Perplexity API');
+      }
+      
+      // Create a transformer to process the stream
+      const transformStream = new TransformStream({
+        start() {
+          // Initialize any state here
+        },
+        transform(chunk, controller) {
+          // Reset the timeout on each chunk
+          clearTimeout(timeoutId);
+          
+          // Forward the chunk
+          controller.enqueue(chunk);
+          
+          // Set a new timeout
+          setTimeout(() => {
+            try {
+              if (controller) controller.error(new Error('Stream processing timed out'));
+            } catch (e) {
+              console.error('Error terminating stream:', e);
+            }
+          }, 55000);
+        },
+        flush() {
+          // Clear the timeout when stream is done
+          clearTimeout(timeoutId);
+        }
+      });
+      
+      // Pipe the response through our transformer
+      return response.body.pipeThrough(transformStream);
+      
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
+  } catch (error) {
+    console.error('Error streaming from Perplexity API:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Streaming request to Perplexity API timed out after 55 seconds');
+    }
+    throw error;
+  }
+}
+
+/**
  * Perplexity API utility functions
  * 
  * This file contains helper functions for interacting with the Perplexity API

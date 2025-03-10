@@ -136,18 +136,35 @@ export default function Assistant() {
     setInputMessage('');
     setIsProcessing(true);
     
+    // Create a temporary message ID for the streaming response
+    const tempAssistantId = generateId();
+    
+    // Add a placeholder assistant message that will be updated as we receive chunks
+    const assistantMessage: Message = {
+      id: tempAssistantId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      citations: []
+    };
+    
+    setMessages(prev => [...prev, assistantMessage]);
+    
     // Create a timeout for the API call
     const apiTimeout = setTimeout(() => {
       // If this timeout fires, the API call is taking too long
       if (isProcessing) {
-        const timeoutMessage: Message = {
-          id: generateId(),
-          role: 'assistant',
-          content: "I'm sorry, but the request is taking longer than expected. I'll continue processing, but here's what I can tell you so far: The Perplexity API might be experiencing high load or your query might be complex. You can try a simpler query or wait for the complete response.",
-          timestamp: new Date()
-        };
-        
-        setMessages(prev => [...prev, timeoutMessage]);
+        // Update the placeholder message with a timeout notice
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === tempAssistantId 
+              ? {
+                  ...msg, 
+                  content: msg.content + "\n\nI'm still processing your request. The Perplexity API might be experiencing high load or your query might be complex. Please wait while I continue working on a complete response."
+                }
+              : msg
+          )
+        );
       }
     }, 15000); // Show a partial response after 15 seconds
     
@@ -228,10 +245,10 @@ export default function Assistant() {
         userContext: userBusinessInfo
       };
       
-      console.log('Sending request to assistant API with conversation history');
+      console.log('Sending request to streaming assistant API');
       
-      // Prepare the API request
-      const response = await fetch('/assistant/api', {
+      // Use the streaming API endpoint
+      const response = await fetch('/assistant/api/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -244,39 +261,85 @@ export default function Assistant() {
       
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Assistant API error status:', response.status);
-        console.error('Assistant API error response:', errorText);
-        throw new Error(`Failed to get response from assistant API: ${response.status} ${errorText}`);
+        console.error('Streaming Assistant API error status:', response.status);
+        console.error('Streaming Assistant API error response:', errorText);
+        throw new Error(`Failed to get streaming response: ${response.status} ${errorText}`);
       }
       
-      const data = await response.json();
-      console.log('Received response from assistant API:', data);
+      // Check if we have a readable stream
+      if (!response.body) {
+        throw new Error('No response body received from streaming API');
+      }
       
-      // Add assistant response to chat
-      const assistantMessage: Message = {
-        id: generateId(),
-        role: 'assistant',
-        content: data.content,
-        timestamp: new Date(),
-        citations: data.citations || []
-      };
+      // Process the stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedContent = '';
       
-      setMessages(prev => [...prev, assistantMessage]);
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) {
+            break;
+          }
+          
+          // Decode the chunk and add it to our accumulated content
+          const chunk = decoder.decode(value, { stream: true });
+          accumulatedContent += chunk;
+          
+          // Update the message with the accumulated content so far
+          setMessages(prev => 
+            prev.map(msg => 
+              msg.id === tempAssistantId 
+                ? { ...msg, content: accumulatedContent }
+                : msg
+            )
+          );
+          
+          // Scroll to the bottom as new content arrives
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        console.log('Streaming completed');
+        
+        // Final update with any remaining content
+        const finalChunk = decoder.decode();
+        if (finalChunk) {
+          accumulatedContent += finalChunk;
+          setMessages(prev => 
+            prev.map(msg => 
+              msg.id === tempAssistantId 
+                ? { ...msg, content: accumulatedContent }
+                : msg
+            )
+          );
+        }
+        
+      } catch (streamError) {
+        console.error('Error processing stream:', streamError);
+        throw streamError;
+      } finally {
+        reader.releaseLock();
+      }
+      
     } catch (error) {
       // Clear the timeout in case of error
       clearTimeout(apiTimeout);
       
-      console.error('Error getting assistant response:', error);
+      console.error('Error getting streaming assistant response:', error);
       
-      // Add error message
-      const errorMessage: Message = {
-        id: generateId(),
-        role: 'assistant',
-        content: `Sorry, I encountered an error while processing your request. ${error instanceof Error ? error.message : 'Please try again.'}`,
-        timestamp: new Date()
-      };
-      
-      setMessages(prev => [...prev, errorMessage]);
+      // Update the placeholder message with the error
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === tempAssistantId 
+            ? {
+                ...msg, 
+                content: `Sorry, I encountered an error while processing your request. ${error instanceof Error ? error.message : 'Please try again.'}`
+              }
+            : msg
+        )
+      );
     } finally {
       setIsProcessing(false);
     }

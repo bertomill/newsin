@@ -2,6 +2,9 @@
   "functions": {
     "app/assistant/api/route.ts": {
       "maxDuration": 60
+    },
+    "app/assistant/api/stream/route.ts": {
+      "maxDuration": 60
     }
   },
   "headers": [
