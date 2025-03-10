@@ -119,42 +119,57 @@ export async function getPerplexityCompletion(
     
     console.log('Calling Perplexity API with validated messages:', JSON.stringify(validatedMessages));
     
-    // Make the API request
-    const response = await fetch('https://api.perplexity.ai/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: "sonar-pro", // Using Perplexity's recommended model for better search capabilities
-        messages: validatedMessages,
-        temperature: 0.2,
-        max_tokens: 2000,
-        search_recency_filter: "day" // Get recent news
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Perplexity API error status:', response.status);
-      console.error('Perplexity API error response:', errorText);
-      throw new Error(`API request failed with status ${response.status}: ${errorText}`);
-    }
-
-    // Parse the response
-    const data: PerplexityResponse = await response.json();
-    console.log('Perplexity API response received');
-
-    // Extract the content and citations
-    const content = data.choices[0]?.message?.content || 
-      "I'm sorry, but I couldn't generate a response. Please try again.";
+    // Create an AbortController to handle timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
     
-    const citations = data.citations || [];
+    try {
+      // Make the API request with timeout
+      const response = await fetch('https://api.perplexity.ai/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: "sonar-pro", // Using Perplexity's recommended model for better search capabilities
+          messages: validatedMessages,
+          temperature: 0.2,
+          max_tokens: 1000, // Reduced from 2000 to reduce response time
+          search_recency_filter: "day" // Get recent news
+        }),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId); // Clear the timeout if the request completes
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Perplexity API error status:', response.status);
+        console.error('Perplexity API error response:', errorText);
+        throw new Error(`API request failed with status ${response.status}: ${errorText}`);
+      }
 
-    return { content, citations };
+      // Parse the response
+      const data: PerplexityResponse = await response.json();
+      console.log('Perplexity API response received');
+
+      // Extract the content and citations
+      const content = data.choices[0]?.message?.content || 
+        "I'm sorry, but I couldn't generate a response. Please try again.";
+      
+      const citations = data.citations || [];
+
+      return { content, citations };
+    } catch (error) {
+      clearTimeout(timeoutId); // Ensure timeout is cleared if there's an error
+      throw error;
+    }
   } catch (error) {
     console.error('Error calling Perplexity API:', error);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Request to Perplexity API timed out after 30 seconds');
+    }
     throw error;
   }
 }

@@ -99,12 +99,19 @@ export async function POST(request: NextRequest) {
     
     console.log('Calling Perplexity API with conversation history');
     
-    // Call the Perplexity API using our utility function
+    // Set a timeout for the entire API call
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('API request timed out after 50 seconds')), 50000);
+    });
+    
+    // Call the Perplexity API using our utility function with a race against timeout
     try {
-      const { content, citations } = await getPerplexityCompletion(
-        formattedMessages,
-        PERPLEXITY_API_KEY
-      );
+      const result = await Promise.race([
+        getPerplexityCompletion(formattedMessages, PERPLEXITY_API_KEY),
+        timeoutPromise
+      ]);
+      
+      const { content, citations } = result as { content: string; citations: string[] };
       
       console.log('Received response from Perplexity API');
       
@@ -117,9 +124,15 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       console.error('Error from Perplexity API:', error);
       
+      // Provide a more specific error message for timeouts
+      const errorMessage = error instanceof Error && 
+        (error.message.includes('timed out') || error.name === 'AbortError')
+        ? "I'm sorry, but the request timed out. The Perplexity API is taking too long to respond. Please try a simpler query or try again later."
+        : "I'm sorry, but I couldn't retrieve the information you requested. There was an error communicating with the Perplexity API. Please check the console logs for more details.";
+      
       return NextResponse.json(
         { 
-          content: "I'm sorry, but I couldn't retrieve the information you requested. There was an error communicating with the Perplexity API. Please check the console logs for more details.",
+          content: errorMessage,
           error: error instanceof Error ? error.message : 'Unknown error'
         } as AssistantApiResponse,
         { status: 500 }
