@@ -1,10 +1,36 @@
 import { NextRequest } from 'next/server';
 import { AssistantApiRequest } from '../../types';
 import { streamPerplexityCompletion, Message } from '@/lib/perplexity';
+import { streamProcessContent } from '@/lib/gemini';
 
 // Define environment variables for API keys
 // In production, these should be set in your environment
 const PERPLEXITY_API_KEY = process.env.NEXT_PUBLIC_PERPLEXITY_API_KEY || '';
+
+// Minimum content length before processing with Gemini
+const MIN_CONTENT_LENGTH = 50;
+
+// Maximum buffer size before forcing processing
+const MAX_BUFFER_SIZE = 200;
+
+// Maximum time to wait for a complete sentence (in milliseconds)
+const MAX_WAIT_TIME = 5000;
+
+// Sentence ending patterns
+const SENTENCE_ENDINGS = /[.!?]\s*$/;
+
+// Content completion markers
+const COMPLETION_MARKERS = ['In conclusion', 'To summarize', '## Summary'];
+
+/**
+ * Check if content appears to be a complete thought
+ * @param content - The content to check
+ * @returns boolean indicating if content is complete
+ */
+function isCompleteThought(content: string): boolean {
+  return SENTENCE_ENDINGS.test(content) || 
+         COMPLETION_MARKERS.some(marker => content.includes(marker));
+}
 
 /**
  * Streaming API route handler for the assistant
@@ -43,54 +69,63 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Extract user business context to enhance the system prompt
-    let enhancedSystemPrompt = '';
-    
-    if (userContext) {
-      const { business, role, themes } = userContext;
-      
-      // Build context from business information
-      if (business?.sector) {
-        const sector = business.sector === 'other' && business.otherSector 
-          ? business.otherSector 
-          : business.sector;
-        
-        enhancedSystemPrompt += `The user works in the ${sector} sector. `;
-      }
-      
-      if (business?.description) {
-        enhancedSystemPrompt += `Their business: ${business.description}. `;
-      }
-      
-      // Add role information
-      if (role?.type) {
-        const roleType = role.type === 'other' && role.otherType 
-          ? role.otherType 
-          : role.type;
-        
-        enhancedSystemPrompt += `Their role is ${roleType}. `;
-      }
-      
-      // Add themes they're interested in
-      if (themes?.selected && themes.selected.length > 0) {
-        enhancedSystemPrompt += `They're tracking these key themes: ${themes.selected.join(', ')}. `;
-      }
-      
-      if (themes?.custom) {
-        enhancedSystemPrompt += `Additional themes of interest: ${themes.custom}. `;
-      }
-    }
-    
     // Format messages for the Perplexity API
     const formattedMessages: Message[] = [];
     
-    // 1. Add system message with enhanced context
-    const systemMessage = messages.find(msg => msg.role === 'system');
+    // Build a more focused personalization context
+    let personalizedContext = '';
+    if (userContext) {
+      const { business, role, themes } = userContext;
+      
+      // Create focused business context
+      if (business?.sector || business?.description) {
+        personalizedContext += '## Business Context\n';
+        if (business.sector) {
+          const sector = business.sector === 'other' ? business.otherSector : business.sector;
+          personalizedContext += `Industry: ${sector}\n`;
+        }
+        if (business.description) {
+          personalizedContext += `Focus: ${business.description}\n`;
+        }
+      }
+      
+      // Add role context
+      if (role?.type) {
+        personalizedContext += '## User Role\n';
+        const roleType = role.type === 'other' ? role.otherType : role.type;
+        personalizedContext += `Position: ${roleType}\n`;
+      }
+      
+      // Add theme preferences
+      if (themes) {
+        const hasSelectedThemes = themes.selected && themes.selected.length > 0;
+        const hasCustomThemes = themes.custom && themes.custom.trim() !== '';
+        
+        if (hasSelectedThemes || hasCustomThemes) {
+          personalizedContext += '## Key Interests\n';
+          if (hasSelectedThemes && themes.selected) {
+            personalizedContext += `Primary themes: ${themes.selected.join(', ')}\n`;
+          }
+          if (hasCustomThemes) {
+            personalizedContext += `Custom interests: ${themes.custom}\n`;
+          }
+        }
+      }
+    }
+
     formattedMessages.push({
       role: 'system',
-      content: systemMessage 
-        ? `${systemMessage.content} ${enhancedSystemPrompt}. CRITICAL INSTRUCTION: You MUST start your response with a complete sentence that begins with a capital letter and ends with proper punctuation. NEVER start with a partial phrase or a continuation of a thought. Your first sentence must be self-contained and complete. IMPORTANT: You MUST provide complete, comprehensive responses that fully utilize all context provided by the user. Your response should be thorough and detailed. Do not truncate or abbreviate your responses. Ensure proper formatting with clear sections, headings, and bullet points where appropriate. Include relevant citations. If the user's query is about trends or industry information, provide a structured, well-organized response covering all relevant aspects.`
-        : `You are a helpful AI assistant for a news application. ${enhancedSystemPrompt} CRITICAL INSTRUCTION: You MUST start your response with a complete sentence that begins with a capital letter and ends with proper punctuation. NEVER start with a partial phrase or a continuation of a thought. Your first sentence must be self-contained and complete. IMPORTANT: You MUST provide complete, comprehensive responses that fully utilize all context provided by the user. Your response should be thorough and detailed. Do not truncate or abbreviate your responses. Ensure proper formatting with clear sections, headings, and bullet points where appropriate. Include relevant citations. If the user's query is about trends or industry information, provide a structured, well-organized response covering all relevant aspects.`
+      content: `You are an experienced news reporter for a leading business publication.
+${personalizedContext}
+
+CRITICAL INSTRUCTIONS:
+1. Present information in clear, concise bullet points
+2. Each major statement must end with "(read more: [X])" citation
+3. Focus on facts relevant to the user's industry and role
+4. Organize content by themes matching user interests
+5. Keep responses focused and avoid repetition
+6. Limit to 3-5 key points total
+7. End response once key points are covered`
     });
     
     // 2. Add conversation history (the validation will happen in the utility function)
@@ -116,114 +151,97 @@ export async function POST(request: NextRequest) {
         const textDecoder = new TextDecoder();
         const textEncoder = new TextEncoder();
         
-        let citations: string[] = [];
         let fullContent = '';
-        let firstChunkProcessed = false;
-        let initialContentBuffer = '';
-        let streamStarted = false;
+        let contentBuffer = '';
+        let lastProcessTime = Date.now();
+        let processedLength = 0;
         
         try {
           while (true) {
             const { done, value } = await reader.read();
             
             if (done) {
+              // Process any remaining content in the buffer
+              if (contentBuffer.length > 0) {
+                const geminiStream = await streamProcessContent(contentBuffer);
+                if (geminiStream) {
+                  for await (const chunk of geminiStream) {
+                    await writer.write(textEncoder.encode(chunk.text()));
+                  }
+                } else {
+                  await writer.write(textEncoder.encode(contentBuffer));
+                }
+              }
               break;
             }
             
             // Decode the chunk
             const chunk = textDecoder.decode(value, { stream: true });
             
-            // Log raw chunk for debugging (first 100 chars)
-            if (chunk.length > 0) {
-              console.log('Raw chunk preview:', chunk.substring(0, Math.min(100, chunk.length)));
-            }
-            
-            // Process the chunk - extract only the content from the JSON
+            // Process each line
             const lines = chunk.split('\n').filter(line => line.trim() !== '');
-            
-            // For the first chunk, log the entire content for debugging
-            if (!firstChunkProcessed && lines.length > 0) {
-              console.log('First chunk complete content:', chunk);
-              firstChunkProcessed = true;
-            }
             
             for (const line of lines) {
               if (line.startsWith('data: ')) {
                 try {
-                  const jsonData = JSON.parse(line.substring(6));
+                  const content = line.substring(6);
                   
-                  // Log the structure of the JSON data for debugging
-                  console.log('JSON data structure:', 
-                    JSON.stringify({
-                      hasChoices: !!jsonData.choices,
-                      choicesLength: jsonData.choices?.length,
-                      hasMessage: !!jsonData.choices?.[0]?.message,
-                      hasDelta: !!jsonData.choices?.[0]?.delta,
-                      hasCitations: !!jsonData.citations
-                    })
-                  );
+                  if (content === '[DONE]') continue;
                   
-                  // Extract content delta if available
-                  if (jsonData.choices && 
-                      jsonData.choices[0]) {
-                    
-                    // Handle both message and delta formats
-                    let contentDelta = '';
-                    
-                    if (jsonData.choices[0].delta && jsonData.choices[0].delta.content) {
-                      contentDelta = jsonData.choices[0].delta.content;
-                    } else if (jsonData.choices[0].message && jsonData.choices[0].message.content) {
-                      contentDelta = jsonData.choices[0].message.content;
-                    }
-                    
-                    if (contentDelta) {
-                      fullContent += contentDelta;
-                      
-                      // Buffer initial content until we have a complete sentence
-                      if (!streamStarted) {
-                        initialContentBuffer += contentDelta;
-                        
-                        // Check if we have a complete sentence (ends with period, question mark, or exclamation)
-                        if (initialContentBuffer.match(/[.!?]\s*$/)) {
-                          streamStarted = true;
-                          // Send the buffered content
-                          await writer.write(textEncoder.encode(initialContentBuffer));
+                  // Add to buffer
+                  contentBuffer += content;
+                  fullContent += content;
+                  
+                  // Check if we should process the buffer
+                  const timeWaiting = Date.now() - lastProcessTime;
+                  const hasMinLength = contentBuffer.length >= MIN_CONTENT_LENGTH;
+                  const isComplete = isCompleteThought(contentBuffer);
+                  const isOversize = contentBuffer.length >= MAX_BUFFER_SIZE;
+                  const waitedTooLong = timeWaiting >= MAX_WAIT_TIME;
+                  
+                  // Only process if we have enough content and either:
+                  // 1. We have a complete thought, or
+                  // 2. Buffer is too large, or
+                  // 3. We've waited too long
+                  if (hasMinLength && (isComplete || isOversize || waitedTooLong)) {
+                    // Avoid processing duplicate content
+                    const newContent = contentBuffer.substring(processedLength);
+                    if (newContent.length > 0) {
+                      const geminiStream = await streamProcessContent(newContent);
+                      if (geminiStream) {
+                        for await (const chunk of geminiStream) {
+                          await writer.write(textEncoder.encode(chunk.text()));
                         }
                       } else {
-                        // Stream is already started, send content directly
-                        await writer.write(textEncoder.encode(contentDelta));
+                        await writer.write(textEncoder.encode(newContent));
                       }
+                      processedLength = contentBuffer.length;
                     }
-                  }
-                  
-                  // Store citations if available
-                  if (jsonData.citations && jsonData.citations.length > 0) {
-                    citations = jsonData.citations;
+                    
+                    // Reset buffer and timer
+                    contentBuffer = '';
+                    lastProcessTime = Date.now();
                   }
                 } catch (e) {
-                  console.error('Error parsing JSON from stream:', e, 'Line:', line);
+                  console.error('Error processing stream line:', e);
+                  if (contentBuffer.length > 0) {
+                    await writer.write(textEncoder.encode(contentBuffer));
+                    contentBuffer = '';
+                    lastProcessTime = Date.now();
+                  }
+                  continue;
                 }
               }
             }
           }
           
-          // If we never started streaming because we didn't get a complete sentence,
-          // send whatever we have in the buffer
-          if (!streamStarted && initialContentBuffer.length > 0) {
-            await writer.write(textEncoder.encode(initialContentBuffer));
-          }
-          
-          // Log the full content for debugging purposes
           console.log('Full content length:', fullContent.length);
-          
-          // If we have citations, send them at the end in a well-formatted way
-          if (citations.length > 0) {
-            const citationsText = '\n\nSources:\n' + citations.map((url, i) => `[${i+1}] ${url}`).join('\n');
-            await writer.write(textEncoder.encode(citationsText));
-          }
           
         } catch (error) {
           console.error('Error processing stream:', error);
+          if (contentBuffer.length > 0) {
+            await writer.write(textEncoder.encode(contentBuffer));
+          }
           await writer.write(textEncoder.encode(`\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`));
         } finally {
           await writer.close();

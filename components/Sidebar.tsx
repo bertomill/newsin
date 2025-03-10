@@ -158,7 +158,7 @@ export default function Sidebar({ user, onSignOut }: SidebarProps) {
           </div>
         </nav>
         
-        {/* User Profile Section */}
+        {/* Users Profile Section */}
         <div className="p-4 border-t flex items-center">
           <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold mr-3">
             {user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'U'}

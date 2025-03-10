@@ -234,6 +234,68 @@ export default function Assistant() {
         });
       }
       
+      // Enhance the user business context with more detailed information
+      const enhancedUserContext = { ...userBusinessInfo };
+      
+      // Add a detailed description of the user's context based on their personalization data
+      if (userBusinessInfo) {
+        let contextDescription = "Based on your personalization data: ";
+        
+        if (userBusinessInfo.business?.sector) {
+          const sector = userBusinessInfo.business.sector === 'other' && userBusinessInfo.business.otherSector 
+            ? userBusinessInfo.business.otherSector 
+            : userBusinessInfo.business.sector;
+          
+          contextDescription += `You work in the ${sector} sector. `;
+          
+          // Add specific context based on the sector
+          switch(userBusinessInfo.business.sector) {
+            case 'technology':
+              contextDescription += "This includes software development, IT services, hardware manufacturing, and tech consulting. ";
+              break;
+            case 'finance':
+              contextDescription += "This includes banking, investment services, insurance, and financial technology. ";
+              break;
+            case 'healthcare':
+              contextDescription += "This includes medical services, pharmaceuticals, health tech, and patient care. ";
+              break;
+            case 'retail':
+              contextDescription += "This includes physical stores, e-commerce, consumer goods, and retail services. ";
+              break;
+            case 'manufacturing':
+              contextDescription += "This includes production facilities, supply chain management, and industrial processes. ";
+              break;
+          }
+        }
+        
+        if (userBusinessInfo.role?.type) {
+          const roleType = userBusinessInfo.role.type === 'other' && userBusinessInfo.role.otherType 
+            ? userBusinessInfo.role.otherType 
+            : userBusinessInfo.role.type;
+          
+          contextDescription += `Your role is ${roleType}. `;
+        }
+        
+        if (userBusinessInfo.business?.description) {
+          contextDescription += `Your business description: "${userBusinessInfo.business.description}". `;
+        }
+        
+        if (userBusinessInfo.themes?.selected && userBusinessInfo.themes.selected.length > 0) {
+          contextDescription += `You're interested in these themes: ${userBusinessInfo.themes.selected.join(', ')}. `;
+        }
+        
+        if (userBusinessInfo.themes?.custom) {
+          contextDescription += `You've also mentioned interest in: ${userBusinessInfo.themes.custom}. `;
+        }
+        
+        // Add the enhanced context description to the user message
+        const lastUserMessageIndex = alternatingMessages.findIndex(msg => msg.role === 'user');
+        if (lastUserMessageIndex !== -1) {
+          alternatingMessages[lastUserMessageIndex].content = 
+            `${alternatingMessages[lastUserMessageIndex].content}\n\n${contextDescription}`;
+        }
+      }
+      
       // Prepare API request payload with conversation history
       const payload = {
         messages: [
@@ -243,7 +305,7 @@ export default function Assistant() {
           },
           ...alternatingMessages
         ],
-        userContext: userBusinessInfo
+        userContext: enhancedUserContext
       };
       
       console.log('Sending request to streaming assistant API');
