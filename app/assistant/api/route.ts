@@ -89,8 +89,8 @@ export async function POST(request: NextRequest) {
     formattedMessages.push({
       role: 'system',
       content: systemMessage 
-        ? `${systemMessage.content} ${enhancedSystemPrompt}`
-        : `You are a helpful AI assistant for a news application. ${enhancedSystemPrompt}`
+        ? `${systemMessage.content} ${enhancedSystemPrompt}. Keep responses concise and under 300 words.`
+        : `You are a helpful AI assistant for a news application. ${enhancedSystemPrompt} Keep responses concise and under 300 words.`
     });
     
     // 2. Add conversation history (the validation will happen in the utility function)
@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
     
     // Set a timeout for the entire API call
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('API request timed out after 50 seconds')), 50000);
+      setTimeout(() => reject(new Error('API request timed out after 55 seconds')), 55000);
     });
     
     // Call the Perplexity API using our utility function with a race against timeout

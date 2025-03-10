@@ -121,7 +121,7 @@ export async function getPerplexityCompletion(
     
     // Create an AbortController to handle timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 55000); // 55 second timeout
     
     try {
       // Make the API request with timeout
@@ -132,10 +132,10 @@ export async function getPerplexityCompletion(
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: "sonar-pro", // Using Perplexity's recommended model for better search capabilities
+          model: "sonar", // Changed from sonar-pro to sonar for faster responses
           messages: validatedMessages,
           temperature: 0.2,
-          max_tokens: 1000, // Reduced from 2000 to reduce response time
+          max_tokens: 800, // Further reduced from 1000 to reduce response time
           search_recency_filter: "day" // Get recent news
         }),
         signal: controller.signal
@@ -168,7 +168,7 @@ export async function getPerplexityCompletion(
   } catch (error) {
     console.error('Error calling Perplexity API:', error);
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Request to Perplexity API timed out after 30 seconds');
+      throw new Error('Request to Perplexity API timed out after 55 seconds');
     }
     throw error;
   }

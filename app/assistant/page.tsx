@@ -136,6 +136,21 @@ export default function Assistant() {
     setInputMessage('');
     setIsProcessing(true);
     
+    // Create a timeout for the API call
+    const apiTimeout = setTimeout(() => {
+      // If this timeout fires, the API call is taking too long
+      if (isProcessing) {
+        const timeoutMessage: Message = {
+          id: generateId(),
+          role: 'assistant',
+          content: "I'm sorry, but the request is taking longer than expected. I'll continue processing, but here's what I can tell you so far: The Perplexity API might be experiencing high load or your query might be complex. You can try a simpler query or wait for the complete response.",
+          timestamp: new Date()
+        };
+        
+        setMessages(prev => [...prev, timeoutMessage]);
+      }
+    }, 15000); // Show a partial response after 15 seconds
+    
     try {
       // Get system message for context
       const systemMessage = messages.find(msg => msg.role === 'system');
@@ -224,6 +239,9 @@ export default function Assistant() {
         body: JSON.stringify(payload),
       });
       
+      // Clear the timeout since we got a response
+      clearTimeout(apiTimeout);
+      
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Assistant API error status:', response.status);
@@ -245,6 +263,9 @@ export default function Assistant() {
       
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
+      // Clear the timeout in case of error
+      clearTimeout(apiTimeout);
+      
       console.error('Error getting assistant response:', error);
       
       // Add error message
