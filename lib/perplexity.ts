@@ -134,9 +134,11 @@ export async function getPerplexityCompletion(
         body: JSON.stringify({
           model: "sonar-pro", // Using sonar-pro for deeper research capabilities
           messages: validatedMessages,
-          temperature: 0.2,
-          max_tokens: 1500, // Increased to allow for more comprehensive responses
-          search_recency_filter: "day" // Get recent news
+          temperature: 0.3, // Slightly increased for more detailed responses
+          max_tokens: 2500, // Significantly increased for comprehensive responses
+          search_recency_filter: "day", // Get recent news
+          presence_penalty: 0.1, // Add slight penalty to avoid repetition
+          frequency_penalty: 0.1 // Add slight penalty to encourage diverse vocabulary
         }),
         signal: controller.signal
       });
@@ -213,9 +215,11 @@ export async function streamPerplexityCompletion(
         body: JSON.stringify({
           model: "sonar-pro", // Using sonar-pro for deeper research capabilities
           messages: validatedMessages,
-          temperature: 0.2,
-          max_tokens: 1500, // Increased to allow for more comprehensive responses
-          search_recency_filter: "day",
+          temperature: 0.3, // Slightly increased for more detailed responses
+          max_tokens: 2500, // Significantly increased for comprehensive responses
+          search_recency_filter: "day", // Get recent news
+          presence_penalty: 0.1, // Add slight penalty to avoid repetition
+          frequency_penalty: 0.1, // Add slight penalty to encourage diverse vocabulary
           stream: true // Enable streaming
         }),
         signal: controller.signal

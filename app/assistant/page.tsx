@@ -187,7 +187,8 @@ export default function Assistant() {
         startIdx = nonSystemMessages.length - 2;
       }
       
-      // Process messages to ensure alternation
+      // Process messages to ensure alternation, but preserve more context
+      // Include up to 8 messages for more context (increased from 4)
       for (let i = startIdx; i >= 0; i--) {
         const msg = nonSystemMessages[i];
         
@@ -204,8 +205,8 @@ export default function Assistant() {
         
         lastRole = msg.role;
         
-        // Limit to last 4 messages for context (plus the new user message we'll add)
-        if (alternatingMessages.length >= 4) {
+        // Limit to last 8 messages for context (plus the new user message we'll add)
+        if (alternatingMessages.length >= 8) {
           break;
         }
       }
