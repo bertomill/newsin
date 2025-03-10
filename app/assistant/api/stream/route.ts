@@ -89,8 +89,8 @@ export async function POST(request: NextRequest) {
     formattedMessages.push({
       role: 'system',
       content: systemMessage 
-        ? `${systemMessage.content} ${enhancedSystemPrompt}. Provide comprehensive, well-researched responses with relevant details and insights. Include citations where appropriate.`
-        : `You are a helpful AI assistant for a news application. ${enhancedSystemPrompt} Provide comprehensive, well-researched responses with relevant details and insights. Include citations where appropriate.`
+        ? `${systemMessage.content} ${enhancedSystemPrompt}. Provide comprehensive, well-researched responses with relevant details and insights. Ensure your responses are complete and well-formatted. Include citations where appropriate.`
+        : `You are a helpful AI assistant for a news application. ${enhancedSystemPrompt} Provide comprehensive, well-researched responses with relevant details and insights. Ensure your responses are complete and well-formatted. Include citations where appropriate.`
     });
     
     // 2. Add conversation history (the validation will happen in the utility function)
@@ -117,6 +117,7 @@ export async function POST(request: NextRequest) {
         const textEncoder = new TextEncoder();
         
         let citations: string[] = [];
+        let fullContent = '';
         
         try {
           while (true) {
@@ -144,6 +145,7 @@ export async function POST(request: NextRequest) {
                       jsonData.choices[0].delta.content) {
                     
                     const contentDelta = jsonData.choices[0].delta.content;
+                    fullContent += contentDelta;
                     
                     // Send only the content delta to the client
                     await writer.write(textEncoder.encode(contentDelta));
@@ -160,7 +162,10 @@ export async function POST(request: NextRequest) {
             }
           }
           
-          // If we have citations, send them at the end
+          // Log the full content for debugging purposes
+          console.log('Full content length:', fullContent.length);
+          
+          // If we have citations, send them at the end in a well-formatted way
           if (citations.length > 0) {
             const citationsText = '\n\nSources:\n' + citations.map((url, i) => `[${i+1}] ${url}`).join('\n');
             await writer.write(textEncoder.encode(citationsText));

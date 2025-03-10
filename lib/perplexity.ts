@@ -135,7 +135,7 @@ export async function getPerplexityCompletion(
           model: "sonar-pro", // Using sonar-pro for deeper research capabilities
           messages: validatedMessages,
           temperature: 0.2,
-          max_tokens: 800, // Further reduced from 1000 to reduce response time
+          max_tokens: 1500, // Increased to allow for more comprehensive responses
           search_recency_filter: "day" // Get recent news
         }),
         signal: controller.signal
@@ -214,7 +214,7 @@ export async function streamPerplexityCompletion(
           model: "sonar-pro", // Using sonar-pro for deeper research capabilities
           messages: validatedMessages,
           temperature: 0.2,
-          max_tokens: 800,
+          max_tokens: 1500, // Increased to allow for more comprehensive responses
           search_recency_filter: "day",
           stream: true // Enable streaming
         }),
