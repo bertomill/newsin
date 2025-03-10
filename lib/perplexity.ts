@@ -70,6 +70,12 @@ function validateMessages(messages: Message[]): Message[] {
     // Once we see a non-system message, mark system messages as done
     systemMessagesDone = true;
     
+    // First non-system message must be from user
+    if (lastRole === null && msg.role !== 'user') {
+      console.warn('First non-system message must be from user - skipping assistant message');
+      continue;
+    }
+    
     // Ensure alternating pattern
     if (lastRole === msg.role) {
       console.warn(`Skipping consecutive ${msg.role} message to maintain alternating pattern`);
@@ -101,6 +107,9 @@ export async function getPerplexityCompletion(
   apiKey: string
 ): Promise<{ content: string; citations: string[] }> {
   try {
+    // Log original messages for debugging
+    console.log('Original messages before validation:', JSON.stringify(messages.map(m => ({ role: m.role, contentLength: m.content.length }))));
+    
     // Validate and fix messages to ensure they meet Perplexity API requirements
     const validatedMessages = validateMessages(messages);
     

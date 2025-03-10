@@ -140,22 +140,66 @@ export default function Assistant() {
       // Get system message for context
       const systemMessage = messages.find(msg => msg.role === 'system');
       
-      // Get the last few messages to maintain conversation context
-      // We'll include up to 5 most recent messages (excluding system message)
-      // This creates a sliding window of conversation history
-      const recentMessages = messages
-        .filter(msg => msg.role !== 'system')
-        .slice(-4) // Get last 4 messages from history
-        .map(msg => ({
+      // Get the conversation history, ensuring alternating user/assistant messages
+      // First, filter out system messages
+      const nonSystemMessages = messages.filter(msg => msg.role !== 'system');
+      
+      // Create an array to hold properly alternating messages
+      const alternatingMessages = [];
+      let lastRole = null;
+      
+      // Always start with a user message after system message
+      // If the first non-system message is from assistant, skip it
+      let startIdx = nonSystemMessages.length - 1;
+      if (nonSystemMessages.length > 0 && nonSystemMessages[0].role === 'assistant') {
+        startIdx = nonSystemMessages.length - 2;
+      }
+      
+      // Process messages to ensure alternation
+      for (let i = startIdx; i >= 0; i--) {
+        const msg = nonSystemMessages[i];
+        
+        // Skip if same role as previous message (avoid consecutive same roles)
+        if (msg.role === lastRole) {
+          continue;
+        }
+        
+        // Add message to our alternating list
+        alternatingMessages.unshift({
           role: msg.role,
           content: msg.content
-        }));
+        });
+        
+        lastRole = msg.role;
+        
+        // Limit to last 4 messages for context (plus the new user message we'll add)
+        if (alternatingMessages.length >= 4) {
+          break;
+        }
+      }
       
-      // Add the current user message
-      recentMessages.push({
-        role: 'user',
-        content: inputMessage
-      });
+      // Ensure the sequence starts with a user message
+      if (alternatingMessages.length > 0 && alternatingMessages[0].role !== 'user') {
+        // Remove the first message if it's not from a user
+        alternatingMessages.shift();
+      }
+      
+      // Add the current user message if not already present
+      // If the last message in our alternating list is already a user message,
+      // replace it with the current one to maintain alternation
+      if (alternatingMessages.length > 0 && 
+          alternatingMessages[alternatingMessages.length - 1].role === 'user') {
+        alternatingMessages[alternatingMessages.length - 1] = {
+          role: 'user',
+          content: inputMessage
+        };
+      } else {
+        // Otherwise just add the new user message
+        alternatingMessages.push({
+          role: 'user',
+          content: inputMessage
+        });
+      }
       
       // Prepare API request payload with conversation history
       const payload = {
@@ -164,7 +208,7 @@ export default function Assistant() {
             role: 'system',
             content: systemMessage?.content || 'You are a helpful AI assistant for a news application.'
           },
-          ...recentMessages
+          ...alternatingMessages
         ],
         userContext: userBusinessInfo
       };
